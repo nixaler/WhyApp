@@ -4,7 +4,7 @@ export async function sendVerificationCode(
   code: string
 ): Promise<void> {
   if (!process.env["TWILIO_ACCOUNT_SID"]) {
-    console.log(`[SMS stub] Code ${code} → ${phone}`);
+    console.log("[SMS stub] Verification code sent (set TWILIO_ACCOUNT_SID to enable real SMS)");
     return;
   }
   try {

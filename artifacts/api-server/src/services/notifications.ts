@@ -13,7 +13,7 @@ export async function sendPush(
     process.env["APN_TEAM_ID"];
 
   if (!hasApn) {
-    console.log(`[PUSH stub] ${title}: ${body}`, data);
+    console.log(`[PUSH stub] Notification queued (set APN_KEY/APN_KEY_ID/APN_TEAM_ID to enable real push)`);
     return;
   }
 

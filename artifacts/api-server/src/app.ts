@@ -31,9 +31,9 @@ app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded files
+// Serve uploaded files — must match URL prefix returned by routes (/api/uploads/...)
 const uploadsDir = path.join(process.cwd(), "uploads");
-app.use("/uploads", express.static(uploadsDir));
+app.use("/api/uploads", express.static(uploadsDir));
 
 // Rate limiting
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 200 });

@@ -1,0 +1,2 @@
+- [WHY app architecture](why-app-arch.md) — dual-artifact dating app; api-server at /api, why-app frontend at /; key design decisions.
+- [WHY upload URL convention](why-upload-urls.md) — photo URLs must use /api/uploads/ prefix; static middleware must match at /api/uploads in app.ts.

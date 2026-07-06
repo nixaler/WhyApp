@@ -4,6 +4,14 @@ import app from "./app";
 import { setupChat } from "./socket/chat";
 import { logger } from "./lib/logger";
 
+// Fail fast on missing required secrets
+if (!process.env["JWT_SECRET"]) {
+  throw new Error("JWT_SECRET environment variable is required");
+}
+if (!process.env["DATABASE_URL"]) {
+  throw new Error("DATABASE_URL environment variable is required");
+}
+
 const rawPort = process.env["PORT"];
 
 if (!rawPort) {

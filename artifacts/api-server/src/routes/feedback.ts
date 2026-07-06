@@ -47,10 +47,10 @@ router.post("/:requestId", authenticate, async (req: AuthRequest, res: any) => {
   // AI moderation
   const modResult = await moderateText(reason + (suggestion ? " " + suggestion : ""));
 
-  // Insert feedback
+  // Insert feedback — delivered_at only set when moderation actually passes
   const { rows: fbRows } = await query(
     `INSERT INTO feedback (request_id, recipient_id, reason, suggestion, moderation_passed, moderation_score, delivered, delivered_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,NOW()) RETURNING *`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
     [
       feedbackReq.id,
       feedbackReq.recipient_id,
@@ -59,6 +59,7 @@ router.post("/:requestId", authenticate, async (req: AuthRequest, res: any) => {
       modResult.passed,
       JSON.stringify(modResult.score),
       modResult.passed,
+      modResult.passed ? new Date() : null,
     ]
   );
 

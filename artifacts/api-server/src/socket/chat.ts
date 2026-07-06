@@ -55,7 +55,13 @@ export function setupChat(io: SocketIO) {
       io.to(`match:${matchId}`).emit("new_message", { message: rows[0] });
     });
 
-    socket.on("typing", ({ matchId, isTyping }) => {
+    socket.on("typing", async ({ matchId, isTyping }) => {
+      // Verify sender belongs to this match before broadcasting
+      const { rows } = await query(
+        "SELECT id FROM matches WHERE id=$1 AND (user1_id=$2 OR user2_id=$2)",
+        [matchId, user.id]
+      );
+      if (!rows.length) return; // silently drop unauthorized typing events
       socket.to(`match:${matchId}`).emit("user_typing", {
         userId: user.id,
         isTyping,
