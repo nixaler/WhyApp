@@ -2,6 +2,7 @@ import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import path from "path";
+import fs from "fs";
 import rateLimit from "express-rate-limit";
 import router from "./routes";
 import { logger } from "./lib/logger";
@@ -44,6 +45,14 @@ app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/register", authLimiter);
 
 app.use("/api", router);
+
+// Serve the built why-app frontend when it's been built alongside this service
+// (single-service deployments, e.g. Railway). In Replit, the frontend is its
+// own artifact/preview and this directory won't exist here, so this is a no-op.
+const frontendDist = path.join(process.cwd(), "..", "why-app", "dist", "public");
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+}
 
 // Error handler
 app.use((err: any, _req: any, res: any, _next: any) => {
