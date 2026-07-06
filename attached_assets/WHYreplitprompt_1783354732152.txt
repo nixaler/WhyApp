@@ -1,0 +1,1328 @@
+Build a complete dating app called WHY — a Node.js/Express backend with PostgreSQL, Socket.io real-time messaging, and a single-file web frontend. The app's core differentiator is its anonymous feedback system: when someone gets left-swiped enough times, the swipers are asked to anonymously explain why. This gives users real feedback to improve their profile.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TECH STACK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Runtime: Node.js 20+
+- Framework: Express 4
+- Database: PostgreSQL (use Replit's built-in PostgreSQL or DATABASE_URL env var)
+- Real-time: Socket.io 4
+- Auth: JWT (30-day tokens) + bcrypt
+- File uploads: Multer (local disk, /uploads folder)
+- AI moderation: OpenAI API (optional — fails open if key not set)
+- Push notifications: Apple APN (optional — stubs if not configured)
+- SMS: Twilio (optional — stubs if not configured)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DEPENDENCIES (package.json)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{
+  "name": "why-dating-app",
+  "version": "1.0.0",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "dependencies": {
+    "apn": "^2.2.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.3.1",
+    "express-validator": "^7.1.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "openai": "^4.52.7",
+    "pg": "^8.12.0",
+    "socket.io": "^4.7.5",
+    "twilio": "^5.2.3",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ENVIRONMENT VARIABLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DATABASE_URL=       # PostgreSQL connection string
+JWT_SECRET=         # Any long random string
+OPENAI_API_KEY=     # Optional — AI content moderation
+TWILIO_ACCOUNT_SID= # Optional — SMS verification
+TWILIO_AUTH_TOKEN=  # Optional
+TWILIO_PHONE_NUMBER=# Optional
+APN_KEY=            # Optional — iOS push notifications
+APN_KEY_ID=         # Optional
+APN_TEAM_ID=        # Optional
+APN_BUNDLE_ID=      # Optional
+NODE_ENV=production
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FILE STRUCTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/
+  server.js
+  config/
+    database.js
+  middleware/
+    auth.js
+    upload.js
+  routes/
+    auth.js
+    users.js
+    swipes.js
+    matches.js
+    messages.js
+    feedback.js
+    boosts.js
+    insights.js
+  services/
+    aiModeration.js
+    notifications.js
+    sms.js
+  socket/
+    chat.js
+migrations/
+  schema.sql
+public/
+  app.html
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DATABASE SCHEMA — migrations/schema.sql
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Run this SQL once to create all tables. In Replit, paste into the database console or run via a migration script.
+
+-- WHY Dating App — PostgreSQL Schema
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+
+CREATE TABLE users (
+  id                    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  email                 VARCHAR(255) UNIQUE,
+  phone                 VARCHAR(20) UNIQUE,
+  password_hash         VARCHAR(255),
+  name                  VARCHAR(100) NOT NULL,
+  date_of_birth         DATE NOT NULL,
+  gender                VARCHAR(30) NOT NULL,
+  seeking               VARCHAR(30)[] NOT NULL DEFAULT '{}',
+  bio                   TEXT,
+  latitude              DECIMAL(10,8),
+  longitude             DECIMAL(11,8),
+  location_city         VARCHAR(100),
+  is_premium            BOOLEAN NOT NULL DEFAULT false,
+  premium_expires_at    TIMESTAMPTZ,
+  boosts_remaining      INT NOT NULL DEFAULT 0,
+  email_verified        BOOLEAN NOT NULL DEFAULT false,
+  phone_verified        BOOLEAN NOT NULL DEFAULT false,
+  identity_verified     BOOLEAN NOT NULL DEFAULT false,
+  identity_photo_url    VARCHAR(500),
+  profile_paused        BOOLEAN NOT NULL DEFAULT false,
+  feedback_opt_out      BOOLEAN NOT NULL DEFAULT false,
+  hidden_from_feedback  BOOLEAN NOT NULL DEFAULT false,
+  swipes_used_today     INT NOT NULL DEFAULT 0,
+  swipes_reset_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  filter_min_age        INT NOT NULL DEFAULT 18,
+  filter_max_age        INT NOT NULL DEFAULT 99,
+  filter_max_distance   INT NOT NULL DEFAULT 100,
+  filter_genders        VARCHAR(30)[] NOT NULL DEFAULT '{}',
+  curiosity_score       INT NOT NULL DEFAULT 50,
+  last_active_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at            TIMESTAMPTZ
+);
+
+CREATE INDEX idx_users_email ON users(email) WHERE deleted_at IS NULL;
+CREATE INDEX idx_users_phone ON users(phone) WHERE deleted_at IS NULL;
+CREATE INDEX idx_users_location ON users(latitude, longitude) WHERE deleted_at IS NULL AND profile_paused = false;
+CREATE INDEX idx_users_last_active ON users(last_active_at);
+
+CREATE TABLE photos (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  url         VARCHAR(500) NOT NULL,
+  sort_order  INT NOT NULL DEFAULT 0,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_photos_user ON photos(user_id);
+
+CREATE TABLE preset_prompts (
+  id      SERIAL PRIMARY KEY,
+  text    VARCHAR(200) NOT NULL
+);
+
+CREATE TABLE user_prompts (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  prompt_text VARCHAR(200) NOT NULL,
+  answer      TEXT NOT NULL,
+  sort_order  INT NOT NULL DEFAULT 0,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_user_prompts_user ON user_prompts(user_id);
+
+CREATE TABLE verification_codes (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type        VARCHAR(20) NOT NULL CHECK (type IN ('phone', 'email')),
+  code        VARCHAR(10) NOT NULL,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  used        BOOLEAN NOT NULL DEFAULT false,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_verification_user ON verification_codes(user_id, type) WHERE used = false;
+
+CREATE TABLE swipes (
+  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  swiper_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  swiped_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  direction     VARCHAR(5) NOT NULL CHECK (direction IN ('left', 'right')),
+  undone        BOOLEAN NOT NULL DEFAULT false,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(swiper_id, swiped_id)
+);
+CREATE INDEX idx_swipes_swiper ON swipes(swiper_id, created_at);
+CREATE INDEX idx_swipes_swiped ON swipes(swiped_id);
+
+CREATE TABLE left_swipe_counters (
+  swiped_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  batch_num     INT NOT NULL DEFAULT 1,
+  count         INT NOT NULL DEFAULT 0,
+  feedback_sent BOOLEAN NOT NULL DEFAULT false,
+  PRIMARY KEY (swiped_id, batch_num)
+);
+
+CREATE TABLE matches (
+  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user1_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user2_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user1_id, user2_id),
+  CHECK (user1_id < user2_id)
+);
+CREATE INDEX idx_matches_user1 ON matches(user1_id);
+CREATE INDEX idx_matches_user2 ON matches(user2_id);
+
+CREATE TABLE messages (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  match_id    UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+  sender_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content     TEXT,
+  photo_url   VARCHAR(500),
+  read_at     TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (content IS NOT NULL OR photo_url IS NOT NULL)
+);
+CREATE INDEX idx_messages_match ON messages(match_id, created_at);
+
+CREATE TABLE feedback_requests (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  recipient_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  swiper_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  swipe_id        UUID NOT NULL REFERENCES swipes(id) ON DELETE CASCADE,
+  completed       BOOLEAN NOT NULL DEFAULT false,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(swiper_id, swipe_id)
+);
+CREATE INDEX idx_feedback_requests_swiper ON feedback_requests(swiper_id, completed);
+
+CREATE TABLE feedback (
+  id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  request_id          UUID NOT NULL REFERENCES feedback_requests(id) ON DELETE CASCADE,
+  recipient_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason              TEXT NOT NULL,
+  suggestion          TEXT,
+  moderation_passed   BOOLEAN NOT NULL DEFAULT false,
+  moderation_score    JSONB,
+  delivered           BOOLEAN NOT NULL DEFAULT false,
+  delivered_at        TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_feedback_recipient ON feedback(recipient_id, delivered_at);
+
+CREATE TABLE feedback_replies (
+  id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  feedback_id  UUID NOT NULL REFERENCES feedback(id) ON DELETE CASCADE,
+  sender_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content      TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE boosts (
+  id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  activated_at TIMESTAMPTZ,
+  expires_at   TIMESTAMPTZ,
+  duration_min INT NOT NULL DEFAULT 30,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_boosts_user ON boosts(user_id);
+CREATE INDEX idx_boosts_active ON boosts(user_id, expires_at);
+
+CREATE TABLE blocks (
+  blocker_id  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (blocker_id, blocked_id)
+);
+
+CREATE TABLE push_tokens (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token       VARCHAR(500) NOT NULL,
+  platform    VARCHAR(10) NOT NULL DEFAULT 'ios',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, token)
+);
+
+INSERT INTO preset_prompts (text) VALUES
+  ('The most adventurous thing I''ve done is...'),
+  ('My perfect Sunday looks like...'),
+  ('A skill I''m still learning...'),
+  ('The question I ask everyone I meet...'),
+  ('What I''m most curious about right now...'),
+  ('A fact that blew my mind recently...'),
+  ('I''ll judge you if...'),
+  ('My simple pleasures are...'),
+  ('We''ll get along if you...'),
+  ('The best thing I ever ate was...'),
+  ('Right now I''m obsessed with...'),
+  ('I''m weirdly good at...'),
+  ('Change my mind:'),
+  ('My love language is...'),
+  ('Two truths and a lie:'),
+  ('The last thing I read was...'),
+  ('I''m looking for someone who...'),
+  ('My most controversial opinion is...');
+
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER users_updated_at
+  BEFORE UPDATE ON users
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/config/database.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const { Pool } = require('pg');
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+});
+
+pool.on('error', (err) => { console.error('Unexpected DB error', err); });
+
+const query = (text, params) => pool.query(text, params);
+const getClient = () => pool.connect();
+
+module.exports = { query, getClient, pool };
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/middleware/auth.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const jwt = require('jsonwebtoken');
+const { query } = require('../config/database');
+
+const authenticate = async (req, res, next) => {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Missing token' });
+  }
+  const token = header.slice(7);
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const { rows } = await query(
+      'SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL',
+      [payload.userId]
+    );
+    if (!rows.length) return res.status(401).json({ error: 'User not found' });
+    req.user = rows[0];
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
+const requirePremium = (req, res, next) => {
+  const { is_premium, premium_expires_at } = req.user;
+  if (is_premium && (!premium_expires_at || new Date(premium_expires_at) > new Date())) {
+    return next();
+  }
+  return res.status(403).json({ error: 'Premium subscription required' });
+};
+
+module.exports = { authenticate, requirePremium };
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/middleware/upload.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const multer = require('multer');
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+const fs = require('fs');
+
+const uploadsDir = path.join(__dirname, '../../uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadsDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
+
+const fileFilter = (_req, file, cb) => {
+  const allowed = ['.jpg', '.jpeg', '.png', '.webp'];
+  const ext = path.extname(file.originalname).toLowerCase();
+  if (allowed.includes(ext)) return cb(null, true);
+  cb(new Error('Only image files are allowed'));
+};
+
+module.exports = multer({ storage, fileFilter, limits: { fileSize: 10 * 1024 * 1024 } });
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/services/notifications.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const { query } = require('../config/database');
+
+let provider;
+
+function getProvider() {
+  if (!provider && process.env.APN_KEY && process.env.APN_KEY_ID && process.env.APN_TEAM_ID) {
+    const apn = require('apn');
+    provider = new apn.Provider({
+      token: { key: process.env.APN_KEY, keyId: process.env.APN_KEY_ID, teamId: process.env.APN_TEAM_ID },
+      production: process.env.NODE_ENV === 'production',
+    });
+  }
+  return provider;
+}
+
+async function sendPush(userId, title, body, data = {}) {
+  const p = getProvider();
+  if (!p) { console.log(`[PUSH stub] ${title}: ${body}`); return; }
+  const { rows } = await query('SELECT token FROM push_tokens WHERE user_id = $1', [userId]);
+  if (!rows.length) return;
+  const apn = require('apn');
+  const note = new apn.Notification();
+  note.expiry = Math.floor(Date.now() / 1000) + 3600;
+  note.badge = 1; note.sound = 'default';
+  note.alert = { title, body }; note.payload = data;
+  note.topic = process.env.APN_BUNDLE_ID;
+  for (const { token } of rows) {
+    const result = await p.send(note, token);
+    if (result.failed.length) console.error('APNs failure:', result.failed);
+  }
+}
+
+module.exports = { sendPush };
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/services/sms.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+let twilioClient;
+
+function getClient() {
+  if (!twilioClient) {
+    const twilio = require('twilio');
+    twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+  }
+  return twilioClient;
+}
+
+async function sendVerificationCode(phone, code) {
+  if (!process.env.TWILIO_ACCOUNT_SID) { console.log(`[SMS stub] Code ${code} → ${phone}`); return; }
+  await getClient().messages.create({
+    body: `Your WHY verification code is: ${code}`,
+    from: process.env.TWILIO_PHONE_NUMBER,
+    to: phone,
+  });
+}
+
+function generateCode() { return Math.floor(100000 + Math.random() * 900000).toString(); }
+
+module.exports = { sendVerificationCode, generateCode };
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/services/aiModeration.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const OpenAI = require('openai');
+
+let openai;
+const getClient = () => {
+  if (!openai) openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return openai;
+};
+
+async function moderateText(text) {
+  if (!process.env.OPENAI_API_KEY) return { passed: true, score: {} };
+  try {
+    const client = getClient();
+    const response = await client.moderations.create({ input: text });
+    const result = response.results[0];
+    return { passed: !result.flagged, score: result.category_scores };
+  } catch (err) {
+    console.error('Moderation error:', err.message);
+    return { passed: true, score: {} };
+  }
+}
+
+module.exports = { moderateText };
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/server.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+process.on('uncaughtException', (err) => { console.error('UNCAUGHT EXCEPTION:', err); process.exit(1); });
+process.on('unhandledRejection', (err) => { console.error('UNHANDLED REJECTION:', err); process.exit(1); });
+
+require('dotenv').config();
+const express = require('express');
+const http = require('http');
+const { Server: SocketIO } = require('socket.io');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const path = require('path');
+const rateLimit = require('express-rate-limit');
+
+const app = express();
+const server = http.createServer(app);
+const io = new SocketIO(server, { cors: { origin: '*', methods: ['GET', 'POST'] } });
+
+app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+app.use(cors());
+app.use(morgan('dev'));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// Serve web app
+app.get('/', (_req, res) => res.sendFile(path.join(__dirname, '../public/app.html')));
+
+const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 200 });
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20 });
+app.use('/api/', limiter);
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/users', require('./routes/users'));
+app.use('/api/swipes', require('./routes/swipes'));
+app.use('/api/matches', require('./routes/matches'));
+app.use('/api/messages', require('./routes/messages'));
+app.use('/api/feedback', require('./routes/feedback'));
+app.use('/api/boosts', require('./routes/boosts'));
+app.use('/api/insights', require('./routes/insights'));
+
+app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+
+require('./socket/chat')(io);
+
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  if (err.message === 'Only image files are allowed') return res.status(400).json({ error: err.message });
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`WHY API running on port ${PORT}`));
+
+module.exports = app;
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/routes/auth.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const express = require('express');
+const router = express.Router();
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { body, validationResult } = require('express-validator');
+const { query } = require('../config/database');
+const { sendVerificationCode, generateCode } = require('../services/sms');
+const { authenticate } = require('../middleware/auth');
+const upload = require('../middleware/upload');
+
+const signToken = (userId) => jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '30d' });
+
+router.post('/register',
+  [body('email').optional().isEmail(), body('phone').optional().isMobilePhone(),
+   body('password').isLength({ min: 8 }), body('name').trim().isLength({ min: 1, max: 100 }),
+   body('date_of_birth').isISO8601(), body('gender').isLength({ min: 1, max: 30 }),
+   body('seeking').isArray({ min: 1 })],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const { email, phone, password, name, date_of_birth, gender, seeking } = req.body;
+    if (!email && !phone) return res.status(400).json({ error: 'Email or phone required' });
+    try {
+      if (email) {
+        const ex = await query('SELECT id FROM users WHERE email = $1', [email]);
+        if (ex.rows.length) return res.status(409).json({ error: 'Email already registered' });
+      }
+      if (phone) {
+        const ex = await query('SELECT id FROM users WHERE phone = $1', [phone]);
+        if (ex.rows.length) return res.status(409).json({ error: 'Phone already registered' });
+      }
+      const hash = await bcrypt.hash(password, 12);
+      const { rows } = await query(
+        `INSERT INTO users (email, phone, password_hash, name, date_of_birth, gender, seeking)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        [email || null, phone || null, hash, name, date_of_birth, gender, seeking]
+      );
+      const user = rows[0];
+      if (phone) {
+        const code = generateCode();
+        const expires = new Date(Date.now() + 10 * 60 * 1000);
+        await query('INSERT INTO verification_codes (user_id, type, code, expires_at) VALUES ($1,$2,$3,$4)',
+          [user.id, 'phone', code, expires]);
+        await sendVerificationCode(phone, code);
+      }
+      const { password_hash, ...safe } = user;
+      res.status(201).json({ token: signToken(user.id), user: safe });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Registration failed' }); }
+  }
+);
+
+router.post('/login', [body('password').exists()], async (req, res) => {
+  const { email, phone, password } = req.body;
+  if (!email && !phone) return res.status(400).json({ error: 'Email or phone required' });
+  try {
+    const col = email ? 'email' : 'phone';
+    const val = email || phone;
+    const { rows } = await query(`SELECT * FROM users WHERE ${col} = $1 AND deleted_at IS NULL`, [val]);
+    if (!rows.length) return res.status(401).json({ error: 'Invalid credentials' });
+    const user = rows[0];
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    await query('UPDATE users SET last_active_at = NOW() WHERE id = $1', [user.id]);
+    const { password_hash, ...safe } = user;
+    res.json({ token: signToken(user.id), user: safe });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Login failed' }); }
+});
+
+router.post('/verify-phone', authenticate, async (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ error: 'Code required' });
+  const { rows } = await query(
+    `SELECT * FROM verification_codes WHERE user_id=$1 AND type='phone' AND used=false AND expires_at>NOW() ORDER BY created_at DESC LIMIT 1`,
+    [req.user.id]
+  );
+  if (!rows.length) return res.status(400).json({ error: 'No active code' });
+  if (rows[0].code !== code) return res.status(400).json({ error: 'Incorrect code' });
+  await query('UPDATE verification_codes SET used=true WHERE id=$1', [rows[0].id]);
+  await query('UPDATE users SET phone_verified=true WHERE id=$1', [req.user.id]);
+  res.json({ message: 'Phone verified' });
+});
+
+router.post('/verify-identity', authenticate, upload.single('photo'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Photo required' });
+  const photoUrl = `/uploads/${req.file.filename}`;
+  await query('UPDATE users SET identity_verified=true, identity_photo_url=$1 WHERE id=$2', [photoUrl, req.user.id]);
+  res.json({ message: 'Identity verification submitted', verified: true });
+});
+
+router.post('/push-token', authenticate, async (req, res) => {
+  const { token, platform = 'ios' } = req.body;
+  if (!token) return res.status(400).json({ error: 'Token required' });
+  await query(`INSERT INTO push_tokens (user_id,token,platform) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+    [req.user.id, token, platform]);
+  res.json({ message: 'Token saved' });
+});
+
+module.exports = router;
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/routes/users.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Implement these endpoints:
+
+GET /users/me — return current user with their photos and prompts arrays
+PATCH /users/me — update allowed fields: name, bio, gender, seeking, latitude, longitude, location_city, filter_min_age, filter_max_age, filter_max_distance, filter_genders, profile_paused, feedback_opt_out, hidden_from_feedback
+POST /users/me/photos — multer single upload, save to photos table with sort_order
+DELETE /users/me/photos/:id — delete photo if it belongs to current user
+POST /users/me/prompts — add a user prompt (prompt_text + answer)
+DELETE /users/me/prompts/:id — delete if belongs to user
+POST /users/:id/block — insert into blocks table
+GET /users/prompts/presets — return all preset_prompts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/routes/swipes.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const express = require('express');
+const router = express.Router();
+const { query } = require('../config/database');
+const { authenticate } = require('../middleware/auth');
+const { sendPush } = require('../services/notifications');
+
+const FREE_SWIPES_PER_DAY = 50;
+const LEFT_SWIPES_PER_FEEDBACK_BATCH = 5;
+
+// GET /swipes/stack — discovery queue
+router.get('/stack', authenticate, async (req, res) => {
+  const u = req.user;
+  const limit = parseInt(req.query.limit) || 20;
+  const { rows } = await query(
+    `SELECT u.id, u.name, u.date_of_birth, u.gender, u.bio, u.curiosity_score,
+            u.identity_verified, u.last_active_at, u.location_city, u.latitude, u.longitude,
+            EXTRACT(YEAR FROM AGE(u.date_of_birth))::INT AS age,
+            EXISTS(SELECT 1 FROM boosts b WHERE b.user_id = u.id AND b.expires_at > NOW()) AS is_boosted
+     FROM users u
+     WHERE u.id != $1
+       AND u.deleted_at IS NULL AND u.profile_paused = false
+       AND ($2::varchar[] = '{}' OR u.gender = ANY($2::varchar[]))
+       AND EXTRACT(YEAR FROM AGE(u.date_of_birth))::INT BETWEEN $3 AND $4
+       AND u.id NOT IN (SELECT swiped_id FROM swipes WHERE swiper_id = $1 AND undone = false)
+       AND u.id NOT IN (
+         SELECT blocked_id FROM blocks WHERE blocker_id = $1
+         UNION SELECT blocker_id FROM blocks WHERE blocked_id = $1
+       )
+       AND ($5 IS NULL OR u.latitude IS NULL OR (
+         6371 * acos(cos(radians($5))*cos(radians(u.latitude))*cos(radians(u.longitude)-radians($6))+sin(radians($5))*sin(radians(u.latitude)))
+         <= $7
+       ))
+     ORDER BY is_boosted DESC, u.last_active_at DESC LIMIT $8`,
+    [u.id, u.filter_genders, u.filter_min_age, u.filter_max_age, u.latitude||null, u.longitude||null, u.filter_max_distance, limit]
+  );
+  const withPhotos = await Promise.all(rows.map(async (user) => {
+    const { rows: photos } = await query('SELECT url FROM photos WHERE user_id=$1 ORDER BY sort_order LIMIT 3', [user.id]);
+    return { ...user, photos: photos.map(p => p.url) };
+  }));
+  res.json({ profiles: withPhotos });
+});
+
+// POST /swipes — record swipe, detect mutual match, trigger feedback
+router.post('/', authenticate, async (req, res) => {
+  const { swiped_id, direction } = req.body;
+  if (!swiped_id || !['left','right'].includes(direction))
+    return res.status(400).json({ error: 'swiped_id and direction required' });
+  if (swiped_id === req.user.id) return res.status(400).json({ error: 'Cannot swipe yourself' });
+  const u = req.user;
+
+  // Daily swipe limit for free users
+  if (!u.is_premium) {
+    const reset = new Date(u.swipes_reset_at);
+    const now = new Date();
+    const sameDay = reset.toDateString() === now.toDateString();
+    const used = sameDay ? u.swipes_used_today : 0;
+    if (used >= FREE_SWIPES_PER_DAY)
+      return res.status(429).json({ error: 'Daily swipe limit reached', limit: FREE_SWIPES_PER_DAY });
+    await query(`UPDATE users SET swipes_used_today=$1, swipes_reset_at=$2 WHERE id=$3`,
+      [sameDay ? used+1 : 1, sameDay ? u.swipes_reset_at : now, u.id]);
+  }
+
+  const { rows } = await query(
+    `INSERT INTO swipes (swiper_id, swiped_id, direction) VALUES ($1,$2,$3)
+     ON CONFLICT (swiper_id, swiped_id) DO UPDATE SET direction=$3, undone=false RETURNING *`,
+    [u.id, swiped_id, direction]
+  );
+  const swipeRow = rows[0];
+  let match = null;
+
+  if (direction === 'right') {
+    const { rows: mutual } = await query(
+      `SELECT 1 FROM swipes WHERE swiper_id=$1 AND swiped_id=$2 AND direction='right' AND undone=false`,
+      [swiped_id, u.id]
+    );
+    if (mutual.length) {
+      const [a, b] = [u.id, swiped_id].sort();
+      const { rows: matchRows } = await query(
+        `INSERT INTO matches (user1_id, user2_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING *`, [a,b]
+      );
+      if (matchRows.length) {
+        match = matchRows[0];
+        await sendPush(swiped_id, "It's a match! 🎉", `You matched with ${u.name}`, { type:'match', matchId:match.id });
+      }
+    }
+  }
+
+  if (direction === 'left') {
+    // WHY Feedback trigger: after LEFT_SWIPES_PER_FEEDBACK_BATCH left swipes on a profile,
+    // create feedback_requests for recent swipers asking them why they passed
+    try {
+      const { rows: counters } = await query(
+        `SELECT * FROM left_swipe_counters WHERE swiped_id=$1 ORDER BY batch_num DESC LIMIT 1`, [swiped_id]
+      );
+      let batchNum = 1, count = 0;
+      if (counters.length) {
+        const last = counters[0];
+        if (last.feedback_sent) { batchNum = last.batch_num + 1; count = 0; }
+        else { batchNum = last.batch_num; count = last.count; }
+      }
+      count++;
+      await query(
+        `INSERT INTO left_swipe_counters (swiped_id, batch_num, count) VALUES ($1,$2,$3)
+         ON CONFLICT (swiped_id, batch_num) DO UPDATE SET count=$3`,
+        [swiped_id, batchNum, count]
+      );
+      if (count >= LEFT_SWIPES_PER_FEEDBACK_BATCH) {
+        const { rows: target } = await query(
+          `SELECT feedback_opt_out, hidden_from_feedback FROM users WHERE id=$1`, [swiped_id]
+        );
+        if (target.length && !target[0].feedback_opt_out && !target[0].hidden_from_feedback) {
+          await query(`UPDATE left_swipe_counters SET feedback_sent=true WHERE swiped_id=$1 AND batch_num=$2`,
+            [swiped_id, batchNum]);
+          const { rows: swipers } = await query(
+            `SELECT s.swiper_id, s.id as swipe_id FROM swipes s
+             WHERE s.swiped_id=$1 AND s.direction='left' AND s.undone=false
+               AND s.swiper_id NOT IN (SELECT swiper_id FROM feedback_requests WHERE recipient_id=$1)
+             ORDER BY s.created_at DESC LIMIT 5`, [swiped_id]
+          );
+          for (const { swiper_id, swipe_id } of swipers) {
+            await query(
+              `INSERT INTO feedback_requests (recipient_id, swiper_id, swipe_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+              [swiped_id, swiper_id, swipe_id]
+            );
+          }
+        }
+      }
+    } catch (err) { console.error('Feedback trigger error:', err); }
+  }
+
+  res.json({ swipe: swipeRow, match });
+});
+
+// POST /swipes/undo
+router.post('/undo', authenticate, async (req, res) => {
+  const { rows } = await query(
+    `SELECT * FROM swipes WHERE swiper_id=$1 AND undone=false ORDER BY created_at DESC LIMIT 1`, [req.user.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Nothing to undo' });
+  await query('UPDATE swipes SET undone=true WHERE id=$1', [rows[0].id]);
+  res.json({ message: 'Swipe undone', restored_user_id: rows[0].swiped_id });
+});
+
+// GET /swipes/remaining
+router.get('/remaining', authenticate, async (req, res) => {
+  if (req.user.is_premium) return res.json({ unlimited: true });
+  const reset = new Date(req.user.swipes_reset_at);
+  const now = new Date();
+  const sameDay = reset.toDateString() === now.toDateString();
+  const used = sameDay ? req.user.swipes_used_today : 0;
+  res.json({ used, remaining: Math.max(0, FREE_SWIPES_PER_DAY - used), limit: FREE_SWIPES_PER_DAY });
+});
+
+module.exports = router;
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/routes/matches.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GET /matches — list all matches with other user profile + last message preview + unread count
+GET /matches/likes — premium only: who liked me (right-swiped me, no match yet)
+DELETE /matches/:id — unmatch (delete match record)
+
+For the list, JOIN to get the other user's name, photo, identity_verified, last_active_at.
+Include last_message as a sub-object with content and created_at.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/routes/messages.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GET /messages/:matchId — get all messages in a match, ordered ASC. Mark incoming as read. Verify user is in the match.
+POST /messages/:matchId — send text message (content field). Verify user is in match.
+POST /messages/:matchId/photo — multer upload, send photo message.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/routes/feedback.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GET /feedback/pending — feedback requests assigned to current user (swiper_id = me, completed = false). Include recipient name and photo.
+POST /feedback/:requestId — submit feedback. Fields: reason (required), suggestion (optional). Run AI moderation. If passes, deliver immediately and update recipient's curiosity_score +1.
+GET /feedback/inbox — received feedback for current user (delivered + passed moderation).
+POST /feedback/:id/reply — anonymous reply to a piece of received feedback.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/routes/boosts.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GET /boosts/status — return boosts_remaining and active boost if any
+POST /boosts/activate — use one boost (30 min). Requires boosts_remaining > 0, no active boost.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/routes/insights.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GET /insights — returns:
+- total_feedback count
+- weekly_trend (last 90 days grouped by week)
+- recent_feedback (last 5, text only, no identity)
+- curiosity_score (from user object)
+- top_words (word frequency from feedback reasons, top 20, words > 4 chars, filtered for stop words)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src/socket/chat.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+module.exports = (io) => {
+  // Middleware: require JWT in socket.handshake.auth.token
+  io.use(async (socket, next) => {
+    const token = socket.handshake.auth?.token;
+    if (!token) return next(new Error('Authentication required'));
+    try {
+      const jwt = require('jsonwebtoken');
+      const { query } = require('../config/database');
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      const { rows } = await query('SELECT id, name FROM users WHERE id=$1 AND deleted_at IS NULL', [payload.userId]);
+      if (!rows.length) return next(new Error('User not found'));
+      socket.user = rows[0];
+      next();
+    } catch { next(new Error('Invalid token')); }
+  });
+
+  io.on('connection', (socket) => {
+    socket.join(`user:${socket.user.id}`);
+
+    socket.on('join_match', async ({ matchId }) => {
+      const { query } = require('../config/database');
+      const { rows } = await query('SELECT * FROM matches WHERE id=$1 AND (user1_id=$2 OR user2_id=$2)', [matchId, socket.user.id]);
+      if (!rows.length) return socket.emit('error', { message: 'Match not found' });
+      socket.join(`match:${matchId}`);
+      socket.emit('joined_match', { matchId });
+    });
+
+    socket.on('send_message', async ({ matchId, content }) => {
+      if (!content?.trim()) return socket.emit('error', { message: 'Content required' });
+      const { query } = require('../config/database');
+      const { rows: matchRows } = await query('SELECT * FROM matches WHERE id=$1 AND (user1_id=$2 OR user2_id=$2)', [matchId, socket.user.id]);
+      if (!matchRows.length) return socket.emit('error', { message: 'Match not found' });
+      const { rows } = await query(
+        `INSERT INTO messages (match_id, sender_id, content) VALUES ($1,$2,$3) RETURNING *`,
+        [matchId, socket.user.id, content.trim()]
+      );
+      io.to(`match:${matchId}`).emit('new_message', { message: rows[0] });
+    });
+
+    socket.on('typing', ({ matchId, isTyping }) => {
+      socket.to(`match:${matchId}`).emit('user_typing', { userId: socket.user.id, isTyping });
+    });
+  });
+};
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+public/app.html — COMPLETE WEB FRONTEND
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+This is a single-file web app that serves as the browser prototype of WHY. It calls the same backend API. Copy this exactly.
+
+IMPORTANT: Replace the BASE url on line 1 of the <script> with your Replit app URL, e.g.:
+  var BASE = 'https://your-repl-name.repl.co/api';
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>WHY</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { height: 100%; }
+body {
+  height: 100%; max-width: 430px; margin: 0 auto;
+  background: #0d0d14; color: #eeeeff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.pg { display: none; flex-direction: column; flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 20px 88px; }
+.pg.on { display: flex; }
+.np { padding-bottom: 28px !important; }
+#nav { display: none; background: #16161f; border-top: 1px solid #222230; padding: 10px 0 env(safe-area-inset-bottom, 16px); flex-shrink: 0; }
+#nav.on { display: flex; justify-content: space-around; }
+.nb { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px 20px; cursor: pointer; color: #7878a0; font-size: 11px; font-weight: 500; }
+.nb.act { color: #4f8ef7; }
+.ni { font-size: 22px; }
+.btn { display: block; width: 100%; padding: 15px; border: none; border-radius: 14px; font-size: 16px; font-weight: 600; cursor: pointer; text-align: center; -webkit-tap-highlight-color: transparent; }
+.btn + .btn { margin-top: 11px; }
+.pri { background: #4f8ef7; color: #fff; }
+.sec { background: #1e1e2a; color: #eeeeff; }
+.gho { background: transparent; color: #7878a0; border: 1.5px solid #2a2a3a; }
+.ig { margin-bottom: 14px; }
+.ig label { display: block; font-size: 12px; color: #7878a0; margin-bottom: 5px; font-weight: 500; }
+input, select { width: 100%; padding: 13px 15px; background: #1e1e2a; border: 1.5px solid #2a2a3a; border-radius: 12px; color: #eeeeff; font-size: 15px; outline: none; -webkit-appearance: none; appearance: none; }
+input:focus, select:focus { border-color: #4f8ef7; }
+select option { background: #1e1e2a; }
+.err { background: rgba(255,77,109,.12); border: 1px solid #ff4d6d; color: #ff4d6d; padding: 11px 14px; border-radius: 10px; font-size: 14px; margin-bottom: 14px; }
+.ld { display: flex; align-items: center; justify-content: center; flex: 1; flex-direction: column; gap: 12px; color: #7878a0; min-height: 120px; }
+.spin { width: 28px; height: 28px; border: 2.5px solid #1e1e2a; border-top-color: #4f8ef7; border-radius: 50%; animation: sp .7s linear infinite; }
+@keyframes sp { to { transform: rotate(360deg); } }
+#pw { justify-content: center; align-items: center; }
+.wlogo { font-size: 72px; font-weight: 900; letter-spacing: -4px; color: #4f8ef7; text-align: center; }
+.wtag { color: #7878a0; font-size: 15px; text-align: center; line-height: 1.6; margin-bottom: 48px; }
+.wbtns { width: 100%; }
+#pl, #pr { padding-top: 20px !important; }
+.backbtn { background: none; border: none; color: #4f8ef7; font-size: 17px; cursor: pointer; padding: 0; margin-bottom: 26px; }
+.alogo { font-size: 40px; font-weight: 900; letter-spacing: -2px; color: #4f8ef7; text-align: center; }
+.atag { text-align: center; color: #7878a0; font-size: 13px; margin-bottom: 24px; }
+#ps { padding: 16px 16px 88px !important; }
+.shd { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.slogo { font-size: 26px; font-weight: 900; color: #4f8ef7; }
+.spill { background: #1e1e2a; border-radius: 20px; padding: 5px 13px; font-size: 13px; color: #7878a0; }
+#ca { position: relative; flex: 1; min-height: 440px; }
+.card { position: absolute; top: 0; left: 0; right: 0; bottom: 0; border-radius: 22px; overflow: hidden; background: #16161f; box-shadow: 0 10px 40px rgba(0,0,0,.5); -webkit-user-select: none; user-select: none; }
+.card.top { z-index: 10; cursor: grab; }
+.card.bk { z-index: 5; transform: scale(.95) translateY(14px); }
+.card.gl { transition: transform .35s ease, opacity .35s; transform: translateX(-140%) rotate(-20deg) !important; opacity: 0; }
+.card.gr { transition: transform .35s ease, opacity .35s; transform: translateX(140%) rotate(20deg) !important; opacity: 0; }
+.ci { width: 100%; height: 62%; background: linear-gradient(160deg,#0e1836,#1a0e36); display: flex; align-items: center; justify-content: center; position: relative; }
+.cem { font-size: 80px; pointer-events: none; }
+.stmp { position: absolute; top: 50%; transform: translateY(-50%); font-size: 22px; font-weight: 900; padding: 7px 15px; border-radius: 8px; border: 3px solid; letter-spacing: 2px; opacity: 0; }
+.slike { left: 16px; color: #4ade80; border-color: #4ade80; }
+.spass { right: 16px; color: #ff4d6d; border-color: #ff4d6d; }
+.showl .slike { opacity: 1; }
+.showp .spass { opacity: 1; }
+.cbod { padding: 14px; }
+.cnm { font-size: 22px; font-weight: 700; }
+.cloc { color: #7878a0; font-size: 13px; margin-top: 2px; }
+.cbio { font-size: 14px; color: rgba(238,238,255,.75); margin-top: 8px; line-height: 1.5; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.csc { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.csb { flex: 1; height: 4px; background: #222; border-radius: 2px; overflow: hidden; }
+.csf { height: 100%; border-radius: 2px; background: #4f8ef7; }
+.csl { font-size: 11px; color: #7878a0; }
+.acts { display: flex; justify-content: center; align-items: center; gap: 18px; padding: 12px 0 4px; }
+.act { border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform .12s; box-shadow: 0 4px 20px rgba(0,0,0,.4); -webkit-tap-highlight-color: transparent; }
+.act:active { transform: scale(.86); }
+.aundo { width: 46px; height: 46px; font-size: 18px; background: #1e1e2a; color: #eeeeff; }
+.apass { width: 64px; height: 64px; font-size: 26px; background: #1e1e2a; color: #eeeeff; }
+.alike { width: 64px; height: 64px; font-size: 26px; background: #4f8ef7; color: #fff; }
+.empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 14px; color: #7878a0; }
+.empty .ei { font-size: 50px; }
+.empty p { font-size: 15px; text-align: center; line-height: 1.5; }
+#pm { padding-top: 24px !important; }
+.shdr { font-size: 22px; font-weight: 700; margin-bottom: 18px; }
+.mr { display: flex; align-items: center; gap: 14px; padding: 13px 0; border-bottom: 1px solid #1a1a28; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.mav { width: 54px; height: 54px; border-radius: 50%; flex-shrink: 0; background: linear-gradient(135deg,#0e1836,#1a0e36); display: flex; align-items: center; justify-content: center; font-size: 24px; }
+.mi { flex: 1; min-width: 0; }
+.mn { font-weight: 600; font-size: 15px; }
+.mp { color: #7878a0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.mt { color: #7878a0; font-size: 12px; flex-shrink: 0; }
+.nomat { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #7878a0; text-align: center; }
+#pc { display: none; flex-direction: column; flex: 1; padding: 0; }
+#pc.on { display: flex; }
+.chd { display: flex; align-items: center; gap: 12px; padding: 13px 18px; background: #16161f; border-bottom: 1px solid #202030; flex-shrink: 0; }
+.cbk { font-size: 26px; cursor: pointer; color: #4f8ef7; line-height: 1; background: none; border: none; }
+.cav { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg,#0e1836,#1a0e36); display: flex; align-items: center; justify-content: center; font-size: 17px; }
+.cname { font-size: 17px; font-weight: 600; }
+.msgs { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 18px 80px; display: flex; flex-direction: column; gap: 9px; }
+.msg { max-width: 75%; padding: 10px 14px; border-radius: 18px; font-size: 15px; line-height: 1.45; word-break: break-word; }
+.me { background: #4f8ef7; align-self: flex-end; border-bottom-right-radius: 4px; }
+.them { background: #1e1e2a; align-self: flex-start; border-bottom-left-radius: 4px; }
+.cbar { flex-shrink: 0; display: flex; gap: 9px; padding: 10px 16px 24px; background: #16161f; border-top: 1px solid #202030; }
+.cbar input { flex: 1; border-radius: 24px; padding: 10px 15px; }
+.sbtn { width: 43px; height: 43px; border-radius: 50%; flex-shrink: 0; background: #4f8ef7; border: none; color: #fff; font-size: 17px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+#pp { padding-top: 24px !important; }
+.pc { background: #16161f; border-radius: 16px; padding: 22px; margin-bottom: 14px; text-align: center; }
+.pav { width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg,#0e1836,#1a0e36); display: flex; align-items: center; justify-content: center; font-size: 36px; margin: 0 auto 12px; }
+.pn { font-size: 22px; font-weight: 700; }
+.pm { color: #7878a0; font-size: 14px; margin-top: 4px; }
+.pb { font-size: 14px; color: rgba(238,238,255,.75); margin-top: 10px; line-height: 1.5; }
+.stats { display: flex; gap: 10px; margin-bottom: 14px; }
+.stat { flex: 1; background: #16161f; border-radius: 12px; padding: 14px; text-align: center; }
+.sv { font-size: 22px; font-weight: 700; color: #4f8ef7; }
+.sl { font-size: 11px; color: #7878a0; margin-top: 2px; }
+.mitem { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #16161f; border-radius: 12px; margin-bottom: 8px; cursor: pointer; }
+.mil { display: flex; align-items: center; gap: 12px; font-size: 15px; }
+.sechd { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #7878a0; margin: 18px 0 8px; }
+#mmod { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.88); align-items: center; justify-content: center; z-index: 200; padding: 20px; }
+#mmod.on { display: flex; }
+.mmc { background: #16161f; border-radius: 24px; padding: 36px 26px; text-align: center; width: 100%; max-width: 350px; }
+.mmtit { font-size: 32px; font-weight: 900; color: #4f8ef7; margin-bottom: 8px; }
+.mmsub { color: #7878a0; font-size: 15px; margin-bottom: 28px; }
+.mmem { font-size: 52px; margin-bottom: 28px; display: flex; justify-content: center; gap: 6px; }
+</style>
+</head>
+<body>
+<div id="pw" class="pg np on">
+  <div style="height:60px"></div>
+  <div class="wlogo">WHY</div>
+  <div style="font-size:28px;text-align:center;margin:-4px 0 4px">?❤️?</div>
+  <p class="wtag">The dating app where<br>curiosity meets connection</p>
+  <div class="wbtns">
+    <button class="btn pri" onclick="go('r')">Create Account</button>
+    <button class="btn sec" onclick="go('l')">Sign In</button>
+  </div>
+</div>
+<div id="pl" class="pg np">
+  <button class="backbtn" onclick="go('w')">‹ Back</button>
+  <div class="alogo">WHY</div>
+  <p class="atag">Welcome back</p>
+  <div id="lerr"></div>
+  <div class="ig"><label>Email</label><input type="email" id="lem" placeholder="you@example.com"></div>
+  <div class="ig"><label>Password</label><input type="password" id="lpw" placeholder="••••••••" onkeydown="if(event.key==='Enter')login()"></div>
+  <button class="btn pri" onclick="login()">Sign In</button>
+  <button class="btn gho" onclick="go('r')">No account? Sign up</button>
+</div>
+<div id="pr" class="pg np">
+  <button class="backbtn" onclick="go('w')">‹ Back</button>
+  <div class="alogo">WHY</div>
+  <p class="atag">Join the curiosity</p>
+  <div id="rerr"></div>
+  <div class="ig"><label>First Name</label><input type="text" id="rn" placeholder="Your name"></div>
+  <div class="ig"><label>Email</label><input type="email" id="re" placeholder="you@example.com"></div>
+  <div class="ig"><label>Password</label><input type="password" id="rp" placeholder="At least 8 characters"></div>
+  <div class="ig"><label>Date of Birth</label><input type="date" id="rd"></div>
+  <div class="ig"><label>I am a…</label>
+    <select id="rg"><option value="">Select</option><option value="man">Man</option><option value="woman">Woman</option><option value="nonbinary">Nonbinary</option></select>
+  </div>
+  <div class="ig"><label>Looking for…</label>
+    <select id="rs"><option value="all">Everyone</option><option value="man">Men</option><option value="woman">Women</option><option value="nonbinary">Nonbinary</option></select>
+  </div>
+  <button class="btn pri" onclick="reg()">Create Account</button>
+  <button class="btn gho" onclick="go('l')">Have an account?</button>
+  <div style="height:20px"></div>
+</div>
+<div id="ps" class="pg">
+  <div class="shd"><span class="slogo">WHY</span><span class="spill" id="srem">…</span></div>
+  <div id="ca"><div class="ld"><div class="spin"></div><span>Loading…</span></div></div>
+  <div class="acts" id="sacts" style="display:none">
+    <button class="act aundo" onclick="undo()">↩</button>
+    <button class="act apass" onclick="swipe('left')">✕</button>
+    <button class="act alike" onclick="swipe('right')">♥</button>
+  </div>
+</div>
+<div id="pm" class="pg">
+  <div class="shdr">Matches</div>
+  <div id="mlist"><div class="ld"><div class="spin"></div></div></div>
+</div>
+<div id="pc">
+  <div class="chd">
+    <button class="cbk" onclick="go('m')">‹</button>
+    <div class="cav" id="cav">👤</div>
+    <span class="cname" id="cname">Chat</span>
+  </div>
+  <div class="msgs" id="msgs"></div>
+  <div class="cbar">
+    <input type="text" id="cin" placeholder="Message…" onkeydown="if(event.key==='Enter')sendMsg()">
+    <button class="sbtn" onclick="sendMsg()">➤</button>
+  </div>
+</div>
+<div id="pp" class="pg">
+  <div class="shdr">Profile</div>
+  <div id="pcont"><div class="ld"><div class="spin"></div></div></div>
+</div>
+<nav id="nav">
+  <div class="nb act" id="nb-s" onclick="tab('s')"><span class="ni">🔥</span><span>Discover</span></div>
+  <div class="nb" id="nb-m" onclick="tab('m')"><span class="ni">💬</span><span>Matches</span></div>
+  <div class="nb" id="nb-p" onclick="tab('p')"><span class="ni">👤</span><span>Profile</span></div>
+</nav>
+<div id="mmod">
+  <div class="mmc">
+    <div class="mmtit">It's a Match!</div>
+    <p class="mmsub">You and <strong id="mmn">someone</strong> liked each other ✨</p>
+    <div class="mmem"><span>😍</span><span>❤️</span><span id="mmem">🥰</span></div>
+    <button class="btn pri" onclick="closeMatch(1)">Send a Message</button>
+    <button class="btn gho" style="margin-top:10px" onclick="closeMatch(0)">Keep Swiping</button>
+  </div>
+</div>
+<script>
+var BASE = '/api';
+var tok = '', me = null, stk = [], chatId = null, pMatch = null;
+try { tok = localStorage.getItem('wtok') || ''; } catch(e) {}
+try { me = JSON.parse(localStorage.getItem('wme') || 'null'); } catch(e) {}
+var EM = ['😊','🌟','✨','🦋','🎯','🌊','🔥','💫','🎭','🌈','🍀','🎸'];
+function emoji(n) { var h=0,s=n||'?'; for(var i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))&65535; return EM[h%EM.length]; }
+function calcAge(d) { if(!d) return ''; var b=new Date(d),n=new Date(),a=n.getFullYear()-b.getFullYear(); if(n.getMonth()<b.getMonth()||(n.getMonth()===b.getMonth()&&n.getDate()<b.getDate())) a--; return a; }
+function setErr(id, msg) { var e=document.getElementById(id); if(e) e.innerHTML=msg?'<div class="err">'+msg+'</div>':''; }
+function go(id) {
+  var pages=['w','l','r','s','m','c','p'];
+  pages.forEach(function(x){ var el=document.getElementById('p'+x); if(el) el.className=el.className.replace(/ on/g,''); });
+  var target=document.getElementById('p'+id);
+  if(target) target.className+=' on';
+  var nav=document.getElementById('nav');
+  var mainTabs={s:1,m:1,p:1};
+  if(mainTabs[id]) {
+    nav.className='on';
+    ['s','m','p'].forEach(function(x){ var b=document.getElementById('nb-'+x); if(b) b.className=b.className.replace(/ act/g,''); });
+    var nb=document.getElementById('nb-'+id); if(nb) nb.className+=' act';
+  } else { nav.className=''; }
+}
+function tab(id) {
+  go(id);
+  if(id==='s'&&!stk.length) loadStack();
+  if(id==='m') loadMatches();
+  if(id==='p') loadProfile();
+}
+function api(method, path, body) {
+  var headers={'Content-Type':'application/json'};
+  if(tok) headers['Authorization']='Bearer '+tok;
+  return fetch(BASE+path,{method:method,headers:headers,body:body?JSON.stringify(body):undefined})
+    .then(function(r){ return r.json().then(function(d){ if(!r.ok) throw new Error(d.error||'Error'); return d; }); });
+}
+function login() {
+  var email=document.getElementById('lem').value.trim(), pw=document.getElementById('lpw').value;
+  setErr('lerr','');
+  if(!email||!pw) return setErr('lerr','Fill in all fields');
+  api('POST','/auth/login',{email:email,password:pw}).then(function(d){ saveAuth(d.token,d.user); enter(); }).catch(function(e){ setErr('lerr',e.message); });
+}
+function reg() {
+  var n=document.getElementById('rn').value.trim(), e=document.getElementById('re').value.trim();
+  var p=document.getElementById('rp').value, d=document.getElementById('rd').value;
+  var g=document.getElementById('rg').value, s=document.getElementById('rs').value;
+  setErr('rerr','');
+  if(!n||!e||!p||!d||!g) return setErr('rerr','Please fill in all fields');
+  if(p.length<8) return setErr('rerr','Password needs 8+ characters');
+  var seekMap={all:['man','woman','nonbinary'],man:['man'],woman:['woman'],nonbinary:['nonbinary']};
+  api('POST','/auth/register',{name:n,email:e,password:p,date_of_birth:d,gender:g,seeking:seekMap[s]||['man','woman','nonbinary']})
+    .then(function(d){
+      saveAuth(d.token,d.user);
+      api('PATCH','/users/me',{latitude:40.7128+(Math.random()-.5)*.15,longitude:-74.006+(Math.random()-.5)*.15,location_city:'New York, NY'}).catch(function(){});
+      enter();
+    }).catch(function(e){ setErr('rerr',e.message); });
+}
+function saveAuth(t,u){ tok=t; me=u; try{ localStorage.setItem('wtok',t); localStorage.setItem('wme',JSON.stringify(u)); }catch(e){} }
+function enter(){ go('s'); loadStack(); }
+function logout(){ tok=''; me=null; stk=[]; try{ localStorage.removeItem('wtok'); localStorage.removeItem('wme'); }catch(e){} go('w'); }
+function loadStack() {
+  var area=document.getElementById('ca');
+  area.innerHTML='<div class="ld"><div class="spin"></div><span>Loading profiles…</span></div>';
+  document.getElementById('sacts').style.display='none';
+  api('GET','/swipes/stack').then(function(d){
+    stk=d.profiles||d||[];
+    api('GET','/swipes/remaining').then(function(r){ var el=document.getElementById('srem'); if(el) el.textContent=(me&&me.is_premium)?'∞ swipes':(r.remaining||50)+' left today'; }).catch(function(){});
+    renderStack();
+  }).catch(function(e){ area.innerHTML='<div class="empty"><span class="ei">⚠️</span><p>'+e.message+'</p></div>'; });
+}
+function renderStack() {
+  var area=document.getElementById('ca'), acts=document.getElementById('sacts');
+  if(!stk.length){ area.innerHTML='<div class="empty"><span class="ei">🎉</span><p>You\'ve seen everyone!<br>Check back later.</p></div>'; acts.style.display='none'; return; }
+  area.innerHTML=''; acts.style.display='flex';
+  var n=Math.min(stk.length,2);
+  for(var i=n-1;i>=0;i--) area.appendChild(makeCard(stk[i],i===0));
+}
+function makeCard(u,isTop) {
+  var a=calcAge(u.date_of_birth), e=emoji(u.name), sc=u.curiosity_score||0;
+  var div=document.createElement('div');
+  div.className='card '+(isTop?'top':'bk');
+  div.setAttribute('data-uid',u.id);
+  div.innerHTML='<div class="ci"><span class="cem">'+e+'</span><div class="stmp slike">LIKE</div><div class="stmp spass">PASS</div></div>'+
+    '<div class="cbod"><div class="cnm">'+u.name+(a?', '+a:'')+'</div>'+
+    '<div class="cloc">'+(u.location_city||'')+'</div>'+
+    (u.bio?'<div class="cbio">'+u.bio+'</div>':'')+
+    '<div class="csc"><span class="csl">?</span><div class="csb"><div class="csf" style="width:'+sc+'%"></div></div><span class="csl">'+sc+'</span></div></div>';
+  if(isTop) addDrag(div);
+  return div;
+}
+function addDrag(card) {
+  var startX=0, diffX=0, active=false;
+  function onStart(x){ startX=x; active=true; }
+  function onMove(x){ if(!active) return; diffX=x-startX; card.style.transform='translateX('+diffX+'px) rotate('+(diffX*.05)+'deg)'; var cls=card.className.replace(/ showl| showp/g,''); if(diffX>40) cls+=' showl'; else if(diffX<-40) cls+=' showp'; card.className=cls; }
+  function onEnd(){ if(!active) return; active=false; card.style.transform=''; card.className=card.className.replace(/ showl| showp/g,''); if(diffX>90) swipe('right'); else if(diffX<-90) swipe('left'); diffX=0; }
+  card.addEventListener('mousedown',function(e){ onStart(e.clientX); e.preventDefault(); });
+  document.addEventListener('mousemove',function(e){ onMove(e.clientX); });
+  document.addEventListener('mouseup',onEnd);
+  card.addEventListener('touchstart',function(e){ onStart(e.touches[0].clientX); },{passive:true});
+  card.addEventListener('touchmove',function(e){ onMove(e.touches[0].clientX); e.preventDefault(); },{passive:false});
+  card.addEventListener('touchend',onEnd);
+}
+function swipe(dir) {
+  if(!stk.length) return;
+  var u=stk[0], top=document.querySelector('.card.top');
+  if(top){ top.className+=(dir==='right')?' gr':' gl'; setTimeout(function(){ if(top.parentNode) top.parentNode.removeChild(top); },380); }
+  stk.shift();
+  var bk=document.querySelector('.card.bk');
+  if(bk){ setTimeout(function(){ bk.className=bk.className.replace(' bk',' top'); addDrag(bk); if(stk.length>1){ var nxt=makeCard(stk[1],false); var a=document.getElementById('ca'); if(a) a.insertBefore(nxt,bk); } },220); }
+  if(!stk.length) setTimeout(renderStack,420);
+  api('POST','/swipes',{swiped_id:u.id,direction:dir}).then(function(r){
+    if(r.match){ pMatch=r.match.id; document.getElementById('mmn').textContent=u.name; document.getElementById('mmem').textContent=emoji(u.name); document.getElementById('mmod').className='on'; }
+  }).catch(function(){});
+}
+function undo(){ api('POST','/swipes/undo').then(function(){ loadStack(); }).catch(function(){}); }
+function closeMatch(chat){ document.getElementById('mmod').className=''; if(chat&&pMatch) openChat(pMatch,document.getElementById('mmn').textContent); pMatch=null; }
+function loadMatches() {
+  var el=document.getElementById('mlist');
+  el.innerHTML='<div class="ld"><div class="spin"></div></div>';
+  api('GET','/matches').then(function(d){
+    var list=d.matches||d||[];
+    if(!list.length){ el.innerHTML='<div class="nomat"><span style="font-size:48px">💬</span><p>No matches yet.<br>Keep swiping!</p></div>'; return; }
+    el.innerHTML=list.map(function(m){ var o=m.other_user||{}, e=emoji(o.name), t=m.last_message_at?new Date(m.last_message_at).toLocaleDateString():'';
+      return '<div class="mr" onclick="openChat(\''+m.id+'\',\''+o.name+'\',\''+e+'\')"><div class="mav">'+e+'</div><div class="mi"><div class="mn">'+(o.name||'Match')+'</div><div class="mp">'+(m.last_message&&m.last_message.content?m.last_message.content:'Say hello!')+'</div></div><span class="mt">'+t+'</span></div>';
+    }).join('');
+  }).catch(function(e){ el.innerHTML='<div class="nomat"><p>'+e.message+'</p></div>'; });
+}
+function openChat(matchId,name,e) {
+  chatId=matchId; document.getElementById('cname').textContent=name; document.getElementById('cav').textContent=e||emoji(name);
+  go('c');
+  var el=document.getElementById('msgs');
+  el.innerHTML='<div class="ld"><div class="spin"></div></div>';
+  api('GET','/messages/'+matchId).then(function(d){ renderMsgs(d.messages||d||[]); }).catch(function(e){ el.innerHTML='<p style="color:#7878a0;text-align:center;padding:30px">'+e.message+'</p>'; });
+}
+function renderMsgs(list) {
+  var el=document.getElementById('msgs');
+  if(!list.length){ el.innerHTML='<p style="color:#7878a0;text-align:center;padding:30px">No messages yet. Say hi! 👋</p>'; return; }
+  el.innerHTML=list.map(function(m){ return '<div class="msg '+(m.sender_id===(me&&me.id)?'me':'them')+'">'+m.content+'</div>'; }).join('');
+  el.scrollTop=el.scrollHeight;
+}
+function sendMsg() {
+  var inp=document.getElementById('cin'), txt=inp.value.trim();
+  if(!txt||!chatId) return; inp.value='';
+  var el=document.getElementById('msgs'), d=document.createElement('div'); d.className='msg me'; d.textContent=txt;
+  if(el.querySelector('p')) el.innerHTML=''; el.appendChild(d); el.scrollTop=el.scrollHeight;
+  api('POST','/messages/'+chatId,{content:txt}).catch(function(){ d.style.opacity='.5'; });
+}
+function loadProfile() {
+  var el=document.getElementById('pcont');
+  el.innerHTML='<div class="ld"><div class="spin"></div></div>';
+  api('GET','/users/me').then(function(d){
+    var u=d.user||d; me=u; var a=calcAge(u.date_of_birth), e=emoji(u.name);
+    el.innerHTML='<div class="pc"><div class="pav">'+e+'</div><div class="pn">'+u.name+'</div><div class="pm">'+(a?a+' · ':'')+u.gender+' · '+(u.location_city||'No location')+'</div>'+(u.bio?'<div class="pb">'+u.bio+'</div>':'')+'</div>'+
+      '<div class="stats"><div class="stat"><div class="sv">'+(u.curiosity_score||0)+'</div><div class="sl">Curiosity</div></div><div class="stat"><div class="sv">'+(u.is_premium?'★':'—')+'</div><div class="sl">Premium</div></div><div class="stat"><div class="sv">'+(u.boosts_remaining||0)+'</div><div class="sl">Boosts</div></div></div>'+
+      '<div class="sechd">Account</div><div class="mitem" style="cursor:default"><div class="mil"><span>✉️ &nbsp;</span><span>'+(u.email||'')+'</span></div></div>'+
+      '<div class="sechd">Settings</div><div class="mitem" onclick="logout()"><div class="mil"><span>🚪 &nbsp;</span><span>Sign Out</span></div><span style="color:#7878a0">›</span></div>';
+  }).catch(function(e){ el.innerHTML='<p style="color:#7878a0;text-align:center;padding:30px">'+e.message+'</p>'; });
+}
+try{ var rd=document.getElementById('rd'); if(rd){ var mx=new Date(); mx.setFullYear(mx.getFullYear()-18); rd.max=mx.toISOString().split('T')[0]; } }catch(e){}
+if(tok&&me){ enter(); } else { go('w'); }
+</script>
+</body>
+</html>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SETUP STEPS FOR REPLIT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. Create a new Replit — choose "Node.js" template
+2. Create all files in the structure above
+3. Add a PostgreSQL database from the Replit database panel
+4. Set SECRET in Replit Secrets: JWT_SECRET = any_long_random_string
+5. Set NODE_ENV = production in Secrets
+6. Open the Replit shell and run the schema SQL:
+   psql $DATABASE_URL < migrations/schema.sql
+   OR create a migrate.js script:
+
+   const { Pool } = require('pg');
+   const fs = require('fs');
+   const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+   async function run() {
+     const sql = fs.readFileSync('migrations/schema.sql', 'utf8');
+     await pool.query(sql);
+     console.log('Done');
+     await pool.end();
+   }
+   run();
+
+   Then run: node migrate.js
+
+7. Click Run — Replit will run "node src/server.js"
+8. Open the web preview — you should see the WHY welcome screen
+9. Create accounts, swipe, match, chat — it all runs against the same backend
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+KEY DESIGN RULES (do not change)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- The swipe POST body must use field name "swiped_id" (not "target_id")
+- The swipe stack response must use key "profiles" (not "cards")
+- matches response key: "matches" array, each with "other_user" object
+- messages response key: "messages" array
+- All timestamps in PostgreSQL TIMESTAMPTZ
+- Match table enforces user1_id < user2_id (both UUIDs sorted alphabetically)
+- Feedback is FULLY anonymous — no user identity ever attached to delivered feedback
+- Left swipe feedback triggers after every 5 left-swipes on the same profile (configurable via LEFT_SWIPES_PER_FEEDBACK_BATCH)
+- Free users: 50 swipes/day. Premium: unlimited.
+- Curiosity score (0-100): starts at 50, increments by 1 per feedback received
+- All optional services (Twilio, APN, OpenAI) must stub gracefully when env vars not set
+- Content-Security-Policy must be disabled (helmet contentSecurityPolicy: false) for inline onclick handlers to work
+- Rate limiter uses "limit" not "max" (express-rate-limit v7)
