@@ -26,7 +26,7 @@ export const authenticate = async (
     );
     if (!rows.length) return res.status(401).json({ error: "User not found" });
     req.user = rows[0];
-    next();
+    return next();
   } catch {
     return res.status(401).json({ error: "Invalid token" });
   }

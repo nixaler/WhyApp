@@ -20,11 +20,18 @@ router.get("/", authenticate, async (req: AuthRequest, res: any) => {
     const withDetails = await Promise.all(
       rows.map(async (match: any) => {
         const { rows: userRows } = await query(
-          `SELECT id, name, identity_verified, last_active_at, curiosity_score FROM users WHERE id = $1`,
+          `SELECT id, name, date_of_birth, bio, identity_verified, last_active_at, curiosity_score,
+                  location_city, height, job_title, company, education, drinking, smoking,
+                  has_kids, interests
+           FROM users WHERE id = $1`,
           [match.other_id]
         );
         const { rows: photoRows } = await query(
-          "SELECT url FROM photos WHERE user_id = $1 ORDER BY sort_order LIMIT 1",
+          "SELECT url FROM photos WHERE user_id = $1 ORDER BY sort_order",
+          [match.other_id]
+        );
+        const { rows: promptRows } = await query(
+          "SELECT prompt_text AS question, answer FROM user_prompts WHERE user_id = $1 ORDER BY sort_order LIMIT 3",
           [match.other_id]
         );
         const { rows: lastMsgRows } = await query(
@@ -36,7 +43,12 @@ router.get("/", authenticate, async (req: AuthRequest, res: any) => {
           [match.id, userId]
         );
         const other_user = userRows[0]
-          ? { ...userRows[0], photo: photoRows[0]?.url || null }
+          ? {
+              ...userRows[0],
+              photos: photoRows.map((p: any) => p.url),
+              photo: photoRows[0]?.url || null,
+              prompts: promptRows,
+            }
           : null;
         return {
           ...match,

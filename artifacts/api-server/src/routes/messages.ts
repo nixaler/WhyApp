@@ -15,7 +15,7 @@ async function verifyMatchMember(matchId: string, userId: string) {
 
 // GET /messages/:matchId
 router.get("/:matchId", authenticate, async (req: AuthRequest, res: any) => {
-  const match = await verifyMatchMember(req.params.matchId, req.user.id);
+  const match = await verifyMatchMember(String(req.params.matchId), req.user.id);
   if (!match) return res.status(403).json({ error: "Match not found" });
   const { rows } = await query(
     "SELECT * FROM messages WHERE match_id = $1 ORDER BY created_at ASC",
@@ -31,7 +31,7 @@ router.get("/:matchId", authenticate, async (req: AuthRequest, res: any) => {
 
 // POST /messages/:matchId
 router.post("/:matchId", authenticate, async (req: AuthRequest, res: any) => {
-  const match = await verifyMatchMember(req.params.matchId, req.user.id);
+  const match = await verifyMatchMember(String(req.params.matchId), req.user.id);
   if (!match) return res.status(403).json({ error: "Match not found" });
   const { content } = req.body;
   if (!content?.trim())
@@ -49,7 +49,7 @@ router.post(
   authenticate,
   upload.single("photo"),
   async (req: AuthRequest, res: any) => {
-    const match = await verifyMatchMember(req.params.matchId, req.user.id);
+    const match = await verifyMatchMember(String(req.params.matchId), req.user.id);
     if (!match) return res.status(403).json({ error: "Match not found" });
     if (!req.file) return res.status(400).json({ error: "Photo required" });
     const photoUrl = `/api/uploads/${req.file.filename}`;

@@ -33,21 +33,27 @@ export function setupChat(io: SocketIO) {
         "SELECT * FROM matches WHERE id=$1 AND (user1_id=$2 OR user2_id=$2)",
         [matchId, user.id]
       );
-      if (!rows.length)
-        return socket.emit("error", { message: "Match not found" });
+      if (!rows.length) {
+        socket.emit("error", { message: "Match not found" });
+        return;
+      }
       socket.join(`match:${matchId}`);
       socket.emit("joined_match", { matchId });
     });
 
     socket.on("send_message", async ({ matchId, content }) => {
-      if (!content?.trim())
-        return socket.emit("error", { message: "Content required" });
+      if (!content?.trim()) {
+        socket.emit("error", { message: "Content required" });
+        return;
+      }
       const { rows: matchRows } = await query(
         "SELECT * FROM matches WHERE id=$1 AND (user1_id=$2 OR user2_id=$2)",
         [matchId, user.id]
       );
-      if (!matchRows.length)
-        return socket.emit("error", { message: "Match not found" });
+      if (!matchRows.length) {
+        socket.emit("error", { message: "Match not found" });
+        return;
+      }
       const { rows } = await query(
         `INSERT INTO messages (match_id, sender_id, content) VALUES ($1,$2,$3) RETURNING *`,
         [matchId, user.id, content.trim()]
