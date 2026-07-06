@@ -19,7 +19,7 @@ router.get("/me", authenticate, async (req: AuthRequest, res: any) => {
       [req.user.id]
     );
     const { rows: prompts } = await query(
-      "SELECT * FROM user_prompts WHERE user_id = $1 ORDER BY sort_order",
+      "SELECT id, prompt_text AS question, answer, sort_order FROM user_prompts WHERE user_id = $1 ORDER BY sort_order",
       [req.user.id]
     );
     res.json({ user: { ...safe, photos, prompts } });
@@ -31,9 +31,14 @@ router.get("/me", authenticate, async (req: AuthRequest, res: any) => {
 
 router.patch("/me", authenticate, async (req: AuthRequest, res: any) => {
   const allowed = [
-    "name", "bio", "gender", "seeking", "latitude", "longitude",
-    "location_city", "filter_min_age", "filter_max_age", "filter_max_distance",
-    "filter_genders", "profile_paused", "feedback_opt_out", "hidden_from_feedback",
+    "name", "bio", "gender", "seeking", "date_of_birth",
+    "latitude", "longitude", "location_city",
+    "filter_min_age", "filter_max_age", "filter_max_distance", "filter_genders",
+    "profile_paused", "feedback_opt_out", "hidden_from_feedback",
+    // Extended profile fields
+    "height", "job_title", "company", "education",
+    "drinking", "smoking", "has_kids", "wants_kids",
+    "interests", "values_list",
   ];
   const updates: string[] = [];
   const vals: any[] = [];

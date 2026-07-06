@@ -27,6 +27,7 @@ app.use(
     },
   }),
 );
+app.set("trust proxy", 1); // Replit proxy sets X-Forwarded-For
 app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
