@@ -8,6 +8,8 @@ import messagesRouter from "./messages";
 import feedbackRouter from "./feedback";
 import boostsRouter from "./boosts";
 import insightsRouter from "./insights";
+import walletRouter from "./wallet";
+import unlocksRouter from "./unlocks";
 
 const router: IRouter = Router();
 
@@ -20,5 +22,7 @@ router.use("/messages", messagesRouter);
 router.use("/feedback", feedbackRouter);
 router.use("/boosts", boostsRouter);
 router.use("/insights", insightsRouter);
+router.use("/wallet", walletRouter);
+router.use("/unlocks", unlocksRouter);
 
 export default router;

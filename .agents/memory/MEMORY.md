@@ -1,3 +1,4 @@
 - [WHY app architecture](why-app-arch.md) — dual-artifact dating app; api-server at /api, why-app frontend at /; key design decisions.
 - [WHY upload URL convention](why-upload-urls.md) — photo URLs must use /api/uploads/ prefix; static middleware must match at /api/uploads in app.ts.
 - [Railway deployment shape](railway-deploy.md) — single-service deploy (api-server serves the built frontend too), what's still Replit-only (local disk uploads, no external Postgres yet).
+- [Wallet, feedback incentive, and paid unlocks](wallet-and-unlocks.md) — $0.10 feedback reward, $1/$2 unlocks, ledger-only (no real payments yet), why "who rejected you" stays anonymized, and the migration that still needs to be run.

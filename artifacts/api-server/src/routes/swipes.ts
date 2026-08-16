@@ -6,7 +6,13 @@ import { sendPush } from "../services/notifications";
 const router = Router();
 
 const FREE_SWIPES_PER_DAY = 50;
-const LEFT_SWIPES_PER_FEEDBACK_BATCH = 5;
+// How many left-swipes a candidate needs to accumulate before the people who passed
+// on them get asked for feedback. Differs by the candidate's own gender.
+const FEEDBACK_BATCH_THRESHOLD: Record<string, number> = { woman: 20, man: 15 };
+const DEFAULT_FEEDBACK_BATCH_THRESHOLD = 15;
+// Regardless of batch size, only this many swipers get prompted (and paid) per batch —
+// caps payout exposure per candidate instead of scaling with however many people disliked them.
+const FEEDBACK_PROMPTS_PER_BATCH = 5;
 
 // GET /swipes/stack — discovery queue
 router.get("/stack", authenticate, async (req: AuthRequest, res: any) => {
@@ -61,7 +67,18 @@ router.get("/stack", authenticate, async (req: AuthRequest, res: any) => {
   res.json({ profiles: withPhotos });
 });
 
-// GET /swipes/likes — who liked the current user (all tiers see count; premium sees details)
+// Latest one-off unlock a user has purchased for a given kind ('likes' | 'rejections'), if any.
+async function getLatestUnlock(userId: string, kind: "likes" | "rejections") {
+  const { rows } = await query(
+    `SELECT * FROM unlocks WHERE user_id=$1 AND kind=$2 ORDER BY purchased_at DESC LIMIT 1`,
+    [userId, kind]
+  );
+  return rows[0] || null;
+}
+
+// GET /swipes/likes — who liked the current user.
+// Visible to: Premium (always, live) or anyone who's purchased a $1 "likes" unlock (a snapshot
+// as of purchase time — likes after that need a fresh unlock, same as the count implies).
 router.get("/likes", authenticate, async (req: AuthRequest, res: any) => {
   const u = req.user;
   const { rows } = await query(
@@ -81,12 +98,15 @@ router.get("/likes", authenticate, async (req: AuthRequest, res: any) => {
     [u.id]
   );
   const count = rows.length;
-  if (!u.is_premium) {
-    // Free users: count only, no profile details
-    return res.json({ likes: [], count, premium_required: true });
+
+  const unlock = u.is_premium ? null : await getLatestUnlock(u.id, "likes");
+  if (!u.is_premium && !unlock) {
+    return res.json({ likes: [], count, premium_required: true, price_cents: 100 });
   }
+  const coversUpTo = u.is_premium ? new Date() : new Date(unlock.covers_up_to);
+  const visible = rows.filter((r: any) => new Date(r.created_at) <= coversUpTo);
   const withPhotos = await Promise.all(
-    rows.map(async (r: any) => {
+    visible.map(async (r: any) => {
       const { rows: photos } = await query(
         "SELECT url FROM photos WHERE user_id=$1 ORDER BY sort_order LIMIT 1",
         [r.user_id]
@@ -94,8 +114,65 @@ router.get("/likes", authenticate, async (req: AuthRequest, res: any) => {
       return { ...r, photo: photos[0]?.url || null };
     })
   );
-  res.json({ likes: withPhotos, count, premium_required: false });
+  res.json({
+    likes: withPhotos,
+    count,
+    premium_required: false,
+    newer_count: u.is_premium ? 0 : count - visible.length,
+    price_cents: 100,
+  });
 });
+
+// GET /swipes/dislikes — anonymized "who rejected you". Never includes name, photo, or user id —
+// only what a $2 unlock is meant to sell: how many, roughly who (age/gender/city), and any
+// feedback they gave. Deliberately not an identity reveal — see .agents/memory/wallet-and-unlocks.md.
+router.get("/dislikes", authenticate, async (req: AuthRequest, res: any) => {
+  const u = req.user;
+  const { rows } = await query(
+    `SELECT s.id as swipe_id, s.created_at, us.date_of_birth, us.gender, us.location_city,
+            f.reason, f.suggestion
+     FROM swipes s
+     JOIN users us ON us.id = s.swiper_id
+     LEFT JOIN feedback f ON f.recipient_id = s.swiped_id
+       AND f.request_id IN (SELECT id FROM feedback_requests WHERE swipe_id = s.id)
+       AND f.delivered = true AND f.moderation_passed = true
+     WHERE s.swiped_id = $1 AND s.direction = 'left' AND s.undone = false
+     ORDER BY s.created_at DESC`,
+    [u.id]
+  );
+  const count = rows.length;
+
+  const unlock = await getLatestUnlock(u.id, "rejections");
+  if (!unlock) {
+    return res.json({ dislikes: [], count, unlock_required: true, price_cents: 200 });
+  }
+  const coversUpTo = new Date(unlock.covers_up_to);
+  const visible = rows
+    .filter((r: any) => new Date(r.created_at) <= coversUpTo)
+    .map((r: any) => ({
+      age: calcAgeServer(r.date_of_birth),
+      gender: r.gender,
+      location_city: r.location_city,
+      reason: r.reason || null,
+      suggestion: r.suggestion || null,
+    }));
+  res.json({
+    dislikes: visible,
+    count,
+    unlock_required: false,
+    newer_count: count - visible.length,
+    price_cents: 200,
+  });
+});
+
+function calcAgeServer(dob: string | Date | null): number | null {
+  if (!dob) return null;
+  const b = new Date(dob);
+  const n = new Date();
+  let a = n.getFullYear() - b.getFullYear();
+  if (n.getMonth() < b.getMonth() || (n.getMonth() === b.getMonth() && n.getDate() < b.getDate())) a--;
+  return a;
+}
 
 // POST /swipes — record swipe, detect mutual match, trigger feedback
 router.post("/", authenticate, async (req: AuthRequest, res: any) => {
@@ -155,6 +232,14 @@ router.post("/", authenticate, async (req: AuthRequest, res: any) => {
 
   if (direction === "left") {
     try {
+      const { rows: target } = await query(
+        `SELECT gender, feedback_opt_out, hidden_from_feedback FROM users WHERE id=$1`,
+        [swiped_id]
+      );
+      const threshold = target.length
+        ? FEEDBACK_BATCH_THRESHOLD[target[0].gender] ?? DEFAULT_FEEDBACK_BATCH_THRESHOLD
+        : DEFAULT_FEEDBACK_BATCH_THRESHOLD;
+
       const { rows: counters } = await query(
         `SELECT * FROM left_swipe_counters WHERE swiped_id=$1 ORDER BY batch_num DESC LIMIT 1`,
         [swiped_id]
@@ -171,11 +256,7 @@ router.post("/", authenticate, async (req: AuthRequest, res: any) => {
          ON CONFLICT (swiped_id, batch_num) DO UPDATE SET count=$3`,
         [swiped_id, batchNum, count]
       );
-      if (count >= LEFT_SWIPES_PER_FEEDBACK_BATCH) {
-        const { rows: target } = await query(
-          `SELECT feedback_opt_out, hidden_from_feedback FROM users WHERE id=$1`,
-          [swiped_id]
-        );
+      if (count >= threshold) {
         if (target.length && !target[0].feedback_opt_out && !target[0].hidden_from_feedback) {
           await query(
             `UPDATE left_swipe_counters SET feedback_sent=true WHERE swiped_id=$1 AND batch_num=$2`,
@@ -185,8 +266,8 @@ router.post("/", authenticate, async (req: AuthRequest, res: any) => {
             `SELECT s.swiper_id, s.id as swipe_id FROM swipes s
              WHERE s.swiped_id=$1 AND s.direction='left' AND s.undone=false
                AND s.swiper_id NOT IN (SELECT swiper_id FROM feedback_requests WHERE recipient_id=$1)
-             ORDER BY s.created_at DESC LIMIT 5`,
-            [swiped_id]
+             ORDER BY s.created_at DESC LIMIT $2`,
+            [swiped_id, FEEDBACK_PROMPTS_PER_BATCH]
           );
           for (const { swiper_id, swipe_id } of swipers) {
             await query(

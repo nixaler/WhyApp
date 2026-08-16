@@ -2,8 +2,13 @@ import { Router } from "express";
 import { query } from "../config/database";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { moderateText } from "../services/aiModeration";
+import { creditWallet } from "../services/wallet";
 
 const router = Router();
+
+const FEEDBACK_REWARD_CENTS = 10;
+const FEEDBACK_MIN_REASON_LENGTH = 15;
+const FEEDBACK_MIN_ACCOUNT_AGE_MS = 24 * 60 * 60 * 1000;
 
 // GET /feedback/pending — feedback requests assigned to current user
 router.get("/pending", authenticate, async (req: AuthRequest, res: any) => {
@@ -34,6 +39,10 @@ router.post("/:requestId", authenticate, async (req: AuthRequest, res: any) => {
   const { reason, suggestion } = req.body;
   if (!reason?.trim())
     return res.status(400).json({ error: "reason required" });
+  if (reason.trim().length < FEEDBACK_MIN_REASON_LENGTH)
+    return res.status(400).json({
+      error: `Reason must be at least ${FEEDBACK_MIN_REASON_LENGTH} characters — give them something they can actually use.`,
+    });
 
   // Verify request exists and belongs to this swiper
   const { rows: reqRows } = await query(
@@ -69,14 +78,30 @@ router.post("/:requestId", authenticate, async (req: AuthRequest, res: any) => {
   ]);
 
   // Update curiosity_score if delivered
+  let rewardCents = 0;
   if (modResult.passed) {
     await query(
       "UPDATE users SET curiosity_score = LEAST(100, curiosity_score + 1) WHERE id = $1",
       [feedbackReq.recipient_id]
     );
+
+    // Pay the reward — only to accounts old enough to rule out sign-up-and-farm abuse.
+    // Idempotent: creditWallet no-ops on a retry via the unique index on this feedback's id.
+    const accountAgeMs = Date.now() - new Date(req.user.created_at).getTime();
+    if (accountAgeMs >= FEEDBACK_MIN_ACCOUNT_AGE_MS) {
+      const result = await creditWallet(req.user.id, FEEDBACK_REWARD_CENTS, "feedback_reward", {
+        referenceId: fbRows[0].id,
+        description: "Feedback reward",
+      });
+      if (result.credited) rewardCents = FEEDBACK_REWARD_CENTS;
+    }
   }
 
-  res.status(201).json({ feedback: fbRows[0], moderation_passed: modResult.passed });
+  res.status(201).json({
+    feedback: fbRows[0],
+    moderation_passed: modResult.passed,
+    reward_cents: rewardCents,
+  });
 });
 
 // GET /feedback/inbox — received feedback

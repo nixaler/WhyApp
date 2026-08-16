@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>WHY</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath fill='%23C4A96B' d='M50 30 C50 10,20 6,12 22 C6 34,16 46,32 47 C38 47.4,42 50,44 56 L50 56 C50 46,44 42,32 40 C22 38,16 32,20 24 C25 15,42 17,42 30 Z'/%3E%3Cpath fill='%23C4A96B' d='M50 30 C50 10,80 6,88 22 C94 34,84 46,68 47 C62 47.4,58 50,56 56 L50 56 C50 46,56 42,68 40 C78 38,84 32,80 24 C75 15,58 17,58 30 Z'/%3E%3Ccircle cx='50' cy='76' r='6' fill='%23C4A96B'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;0,900;1,400;1,600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -135,6 +136,8 @@ h1,h2{font-family:var(--serif)}
    WELCOME SCREEN
 ═══════════════════════════════════════════════════════════════════════ */
 #screen-welcome{background:var(--bg);align-items:center;justify-content:center;padding:40px 32px}
+.w-mark{width:52px;height:52px;color:var(--gold);margin:0 auto 18px}
+.w-mark svg{width:100%;height:100%}
 .w-logo{font-family:var(--serif);font-size:80px;font-weight:900;color:var(--gold);
   letter-spacing:-4px;text-align:center;line-height:1}
 .w-divider{width:40px;height:2px;background:var(--gold);opacity:.4;border-radius:2px;margin:20px auto}
@@ -314,6 +317,9 @@ h1,h2{font-family:var(--serif)}
 .curious-badge{display:inline-block;background:var(--gold-bg);color:var(--gold-d);
   border:1px solid rgba(196,169,107,.4);font-size:12px;font-weight:700;
   padding:4px 12px;border-radius:20px;margin-bottom:16px}
+.unlock-more{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:var(--bg2);border-radius:var(--r-sm);padding:12px 14px;margin-bottom:14px;
+  font-size:13px;color:var(--text2)}
 
 /* ═══════════════════════════════════════════════════════════════════════
    WHY TAB
@@ -416,6 +422,11 @@ h1,h2{font-family:var(--serif)}
   border-bottom:1px solid var(--border);cursor:pointer}
 .menu-item:last-child{border-bottom:none}
 .menu-left{display:flex;align-items:center;gap:12px;font-size:15px}
+.wallet-balance{font-family:var(--serif);font-size:34px;font-weight:700;color:var(--gold)}
+.wallet-tx-list{margin-top:14px;border-top:1px solid var(--border);padding-top:10px}
+.wallet-tx{display:flex;justify-content:space-between;font-size:13px;color:var(--text2);padding:5px 0}
+.wallet-tx-in{color:#4ade80;font-weight:600}
+.wallet-tx-out{color:var(--text3);font-weight:600}
 .menu-chev{color:var(--text4);font-size:18px}
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -429,6 +440,8 @@ h1,h2{font-family:var(--serif)}
   background:radial-gradient(ellipse, rgba(196,169,107,.3) 0%, transparent 70%);
   animation:glow-pulse 2s ease-in-out infinite}
 @keyframes glow-pulse{0%,100%{opacity:.6;transform:scale(1)} 50%{opacity:1;transform:scale(1.04)}}
+.mm-mark{width:34px;height:34px;color:var(--gold);margin:0 auto 8px}
+.mm-mark svg{width:100%;height:100%}
 .mm-logo{font-family:var(--serif);font-size:18px;font-weight:700;color:var(--gold);margin-bottom:12px;letter-spacing:1px;text-transform:uppercase}
 .mm-title{font-family:var(--serif);font-size:32px;font-weight:900;margin-bottom:6px}
 .mm-sub{color:var(--text2);font-size:15px;margin-bottom:24px;line-height:1.5}
@@ -445,6 +458,15 @@ h1,h2{font-family:var(--serif)}
   width:100%;padding:20px 24px env(safe-area-inset-bottom,28px);max-height:85vh;overflow-y:auto}
 .edit-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
 .edit-title{font-family:var(--serif);font-size:20px;font-weight:700}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TOAST
+═══════════════════════════════════════════════════════════════════════ */
+.toast{position:fixed;left:50%;bottom:calc(var(--nav-h) + 20px);transform:translateX(-50%) translateY(10px);
+  background:var(--gold);color:#0A0905;font-size:13.5px;font-weight:600;padding:11px 20px;
+  border-radius:30px;box-shadow:var(--shadow-lg);opacity:0;transition:opacity .25s,transform .25s;
+  z-index:300;white-space:nowrap;max-width:88vw;text-overflow:ellipsis;overflow:hidden}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 </style>
 </head>
 <body>
@@ -452,6 +474,7 @@ h1,h2{font-family:var(--serif)}
 <!-- ═══════════════════ WELCOME ═══════════════════ -->
 <div id="screen-welcome" class="screen active">
   <button class="theme-toggle" onclick="toggleTheme()">◑</button>
+  <div class="w-mark" id="w-mark"></div>
   <div class="w-logo">WHY</div>
   <div class="w-divider"></div>
   <p class="w-tag">Where curiosity<br><em>becomes connection</em></p>
@@ -602,6 +625,7 @@ h1,h2{font-family:var(--serif)}
       <div class="why-tabs">
         <button class="why-tab-btn active" id="wt-feedback" onclick="whyTab('feedback')">Inbox</button>
         <button class="why-tab-btn" id="wt-pending" onclick="whyTab('pending')">To Give</button>
+        <button class="why-tab-btn" id="wt-passed" onclick="whyTab('passed')">Passed</button>
         <button class="why-tab-btn" id="wt-insights" onclick="whyTab('insights')">Insights</button>
       </div>
     </div>
@@ -683,6 +707,7 @@ h1,h2{font-family:var(--serif)}
 <div id="modal-match">
   <div class="match-modal-inner">
     <div class="match-glow"></div>
+    <div class="mm-mark" id="mm-mark"></div>
     <div class="mm-logo">WHY</div>
     <h2 class="mm-title">It's a match</h2>
     <p class="mm-sub">You and <strong id="mm-name">someone</strong> chose each other</p>
@@ -760,6 +785,7 @@ function avatarFb(name, fontSize) {
 }
 // ─── ICONS (inline SVG, stroke = currentColor) ─────────────────────────────
 var ICON = {
+  logo:'<svg viewBox="0 0 100 100" fill="currentColor"><path d="M50 30 C50 10,20 6,12 22 C6 34,16 46,32 47 C38 47.4,42 50,44 56 L50 56 C50 46,44 42,32 40 C22 38,16 32,20 24 C25 15,42 17,42 30 Z"/><path d="M50 30 C50 10,80 6,88 22 C94 34,84 46,68 47 C62 47.4,58 50,56 56 L50 56 C50 46,56 42,68 40 C78 38,84 32,80 24 C75 15,58 17,58 30 Z"/><circle cx="50" cy="76" r="6"/></svg>',
   discover:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2.2 5.8-5.8 2.2 2.2-5.8z"/></svg>',
   heart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.2s-7.2-4.6-9.6-9.1C.9 8 2 4.6 5.2 3.8c2-.5 3.9.3 5 1.9l1.8 2.6 1.8-2.6c1.1-1.6 3-2.4 5-1.9 3.2.8 4.3 4.2 2.8 7.3-2.4 4.5-9.6 9.1-9.6 9.1z"/></svg>',
   heartFill:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 20.2s-7.2-4.6-9.6-9.1C.9 8 2 4.6 5.2 3.8c2-.5 3.9.3 5 1.9l1.8 2.6 1.8-2.6c1.1-1.6 3-2.4 5-1.9 3.2.8 4.3 4.2 2.8 7.3-2.4 4.5-9.6 9.1-9.6 9.1z"/></svg>',
@@ -789,6 +815,7 @@ function dot(cls) { return '<span class="live-dot'+(cls?' '+cls:'')+'"></span>';
   var el=document.getElementById('ic-'+k);
   if(el) el.innerHTML=ICON[map[k]];
 });
+document.querySelectorAll('.w-mark, #mm-mark').forEach(function(el){ el.innerHTML=ICON.logo; });
 document.getElementById('act-rewind').innerHTML=icon('rewind',20);
 document.getElementById('act-pass').innerHTML=icon('x',24);
 document.getElementById('act-super').innerHTML=icon('star',21);
@@ -1271,17 +1298,19 @@ function loadLikes() {
       blurHtml+='<div class="premium-wall">'+
         '<div class="curious-badge">WHY Curious</div>'+
         '<h3>'+(d.count||0)+' '+(d.count===1?'person':'people')+' liked you</h3>'+
-        '<p>Upgrade to WHY Curious to see exactly who liked your profile and make your move first.</p>'+
+        '<p>Upgrade to WHY Curious to see who liked you permanently, or unlock a one-time look right now.</p>'+
         '<button class="btn btn-gold">Upgrade to WHY Curious</button>'+
+        '<button class="btn btn-outline" onclick="purchaseUnlock(\'likes\',loadLikes)">Unlock for '+fmtCents(d.price_cents||100)+'</button>'+
       '</div>';
       el.innerHTML=blurHtml;
       return;
     }
+    var newerHtml=d.newer_count>0?'<div class="unlock-more"><span>'+d.newer_count+' new like'+(d.newer_count===1?'':'s')+' since your last unlock</span><button class="btn btn-outline btn-sm" onclick="purchaseUnlock(\'likes\',loadLikes)">Unlock for '+fmtCents(d.price_cents||100)+'</button></div>':'';
     if(!d.likes||!d.likes.length) {
-      el.innerHTML='<div class="empty-state"><div class="ei">'+icon('heart',44)+'</div><p>No likes yet.<br>Keep discovering — your people are out there.</p></div>';
+      el.innerHTML=newerHtml+'<div class="empty-state"><div class="ei">'+icon('heart',44)+'</div><p>No likes yet.<br>Keep discovering — your people are out there.</p></div>';
       return;
     }
-    var html='<div class="likes-grid">';
+    var html=newerHtml+'<div class="likes-grid">';
     d.likes.forEach(function(lk) {
       var age=calcAge(lk.date_of_birth);
       html+='<div class="lk-card" onclick="openLikerProfile(\''+lk.user_id+'\')">'+
@@ -1294,6 +1323,10 @@ function loadLikes() {
     el.innerHTML=html;
   }).catch(function(e){ el.innerHTML='<div class="empty-state"><p>'+esc(e.message)+'</p></div>'; });
 }
+function purchaseUnlock(kind, onDone) {
+  api('POST','/unlocks/'+kind).then(function(){ if(onDone) onDone(); loadProfile(); })
+    .catch(function(e){ alert(e.message); });
+}
 function openLikerProfile(uid) {
   var u=S.stack.find(function(s){return s.id===uid});
   if(u) openSheet(u);
@@ -1302,7 +1335,7 @@ function openLikerProfile(uid) {
 // ─── WHY TAB ──────────────────────────────────────────────────────────────
 function whyTab(sub) {
   S.whySubTab=sub;
-  ['feedback','pending','insights'].forEach(function(t) {
+  ['feedback','pending','passed','insights'].forEach(function(t) {
     document.getElementById('wt-'+t).classList.toggle('active',t===sub);
   });
   loadWhy();
@@ -1338,6 +1371,29 @@ function loadWhy() {
             }).join('')+
           '</div>'+
           '<button class="btn btn-gold btn-sm" onclick="submitFb(\''+r.id+'\',this)">Share feedback</button>'+
+        '</div>';
+      }).join('');
+    }).catch(function(e){ el.innerHTML='<div class="empty-state"><p>'+esc(e.message)+'</p></div>'; });
+  } else if(S.whySubTab==='passed') {
+    api('GET','/swipes/dislikes').then(function(d) {
+      if(d.unlock_required) {
+        el.innerHTML='<div class="premium-wall">'+
+          '<h3>'+(d.count||0)+' '+(d.count===1?'person':'people')+' passed on you</h3>'+
+          '<p>See anonymized details — age, general area, and any feedback they left — for '+fmtCents(d.price_cents||200)+'. No names or photos, ever.</p>'+
+          '<button class="btn btn-gold" onclick="purchaseUnlock(\'rejections\',loadWhy)">Unlock for '+fmtCents(d.price_cents||200)+'</button>'+
+        '</div>';
+        return;
+      }
+      var newerHtml=d.newer_count>0?'<div class="unlock-more"><span>'+d.newer_count+' more since your last unlock</span><button class="btn btn-outline btn-sm" onclick="purchaseUnlock(\'rejections\',loadWhy)">Unlock for '+fmtCents(d.price_cents||200)+'</button></div>':'';
+      if(!d.dislikes||!d.dislikes.length) {
+        el.innerHTML=newerHtml+'<div class="empty-state"><div class="ei">'+icon('checkCircle',44)+'</div><p>Nobody\'s passed on you yet.</p></div>';
+        return;
+      }
+      el.innerHTML=newerHtml+d.dislikes.map(function(r) {
+        return '<div class="fb-card">'+
+          '<div class="fb-anon">'+(r.age||'?')+' · '+esc(r.gender||'')+(r.location_city?' · '+esc(r.location_city):'')+'</div>'+
+          (r.reason?'<div class="fb-reason">'+esc(r.reason)+'</div>':'<div class="fb-reason muted">No feedback given</div>')+
+          (r.suggestion?'<div class="fb-suggestion">Suggestion: '+esc(r.suggestion)+'</div>':'')+
         '</div>';
       }).join('');
     }).catch(function(e){ el.innerHTML='<div class="empty-state"><p>'+esc(e.message)+'</p></div>'; });
@@ -1377,8 +1433,18 @@ function submitFb(reqId, btn) {
   var reason=(_fbSelections[reqId]||[]).join(', ') || 'Not my type';
   btn.textContent='Sending…'; btn.disabled=true;
   api('POST','/feedback/'+reqId,{reason:reason})
-    .then(function(){ loadWhy(); })
+    .then(function(d){
+      if(d.reward_cents>0) toast('You earned '+fmtCents(d.reward_cents)+' for that feedback.');
+      loadWhy();
+    })
     .catch(function(e){ btn.textContent='Share feedback'; btn.disabled=false; alert(e.message); });
+}
+function toast(msg) {
+  var t=document.createElement('div');
+  t.className='toast'; t.textContent=msg;
+  document.body.appendChild(t);
+  setTimeout(function(){ t.classList.add('show'); }, 10);
+  setTimeout(function(){ t.classList.remove('show'); setTimeout(function(){ t.remove(); }, 300); }, 2600);
 }
 
 // ─── MATCHES TAB ──────────────────────────────────────────────────────────
@@ -1490,7 +1556,8 @@ function sendChatMsg() {
 function loadProfile() {
   var el=document.getElementById('profile-content');
   el.innerHTML='<div class="loader"><div class="spin"></div></div>';
-  api('GET','/users/me').then(function(d) {
+  Promise.all([api('GET','/users/me'), api('GET','/wallet').catch(function(){return null;})]).then(function(res) {
+    var d=res[0], wallet=res[1];
     var u=d.user||d; S.me=u; S.myPhotos=u.photos||[];
     var age=calcAge(u.date_of_birth);
     var fb=avatarFb(u.name||'?',26);
@@ -1545,6 +1612,8 @@ function loadProfile() {
         '<div class="p-section-hdr"><span class="p-section-title">Interests</span><button class="p-edit-btn" onclick="editInterests()">Edit</button></div>'+
         '<div class="basics-row">'+(u.interests&&u.interests.length?u.interests.map(function(i){return '<div class="interest-chip">'+esc(i)+'</div>';}).join(''):'<span class="muted small">Add interests to find like-minded people</span>')+'</div>'+
       '</div>'+
+      // Wallet
+      renderWalletSection(wallet)+
       // Settings
       '<div class="p-section">'+
         '<div class="p-section-title" style="margin-bottom:12px">Settings</div>'+
@@ -1554,6 +1623,34 @@ function loadProfile() {
       '<div style="height:20px"></div>';
     el.innerHTML=html;
   }).catch(function(e){ el.innerHTML='<div class="empty-state"><p>'+esc(e.message)+'</p></div>'; });
+}
+function fmtCents(c) { return '$'+((c||0)/100).toFixed(2); }
+function renderWalletSection(wallet) {
+  if(!wallet) return '';
+  var bal=wallet.balance_cents||0, min=wallet.min_payout_cents||1000;
+  var pending=wallet.pending_payout;
+  var recent=(wallet.transactions||[]).slice(0,5);
+  var cashoutHtml;
+  if(pending) {
+    cashoutHtml='<div class="muted small">Payout of '+fmtCents(pending.amount_cents)+' requested — pending.</div>';
+  } else if(bal>=min) {
+    cashoutHtml='<button class="btn btn-outline btn-sm" onclick="requestPayout()">Cash out '+fmtCents(bal)+'</button>';
+  } else {
+    cashoutHtml='<div class="muted small">Earn '+fmtCents(min-bal)+' more to cash out (min '+fmtCents(min)+').</div>';
+  }
+  return '<div class="p-section">'+
+    '<div class="p-section-hdr"><span class="p-section-title">Wallet</span></div>'+
+    '<div class="wallet-balance">'+fmtCents(bal)+'</div>'+
+    '<div class="muted small" style="margin-bottom:12px">Earn 10&cent; every time you give feedback that helps someone improve.</div>'+
+    cashoutHtml+
+    (recent.length?'<div class="wallet-tx-list">'+recent.map(function(t){
+      var sign=t.amount_cents>=0?'+':'';
+      return '<div class="wallet-tx"><span>'+esc(t.description||t.type)+'</span><span class="'+(t.amount_cents>=0?'wallet-tx-in':'wallet-tx-out')+'">'+sign+fmtCents(t.amount_cents)+'</span></div>';
+    }).join('')+'</div>':'')+
+  '</div>';
+}
+function requestPayout() {
+  api('POST','/wallet/payout-request').then(function(){ loadProfile(); }).catch(function(e){ alert(e.message); });
 }
 function pickProfilePhoto() {
   document.getElementById('photo-file-in').click();
